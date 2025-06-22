@@ -3,57 +3,12 @@ import password from "models/password";
 import { ValidationError, NotFoundError } from "infra/errors";
 
 async function create(userInputValue) {
-  await validadeUniqueEmail(userInputValue.email);
   await validadeUniqueUsername(userInputValue.username);
+  await validadeUniqueEmail(userInputValue.email);
   await hashPasswordInObject(userInputValue);
 
   const newUser = await runInsertQuery(userInputValue);
   return newUser;
-
-  async function validadeUniqueEmail(email) {
-    const results = await database.query({
-      text: `
-          SELECT 
-            email
-          FROM
-            users
-          WHERE
-            LOWER(email) = LOWER($1)
-          ;`,
-      values: [email],
-    });
-    if (results.rowCount > 0) {
-      throw new ValidationError({
-        message: "Email informado já está sendo utilizado.",
-        action: "Utilize outro email para realizar o cadastro.",
-      });
-    }
-  }
-
-  async function validadeUniqueUsername(username) {
-    const results = await database.query({
-      text: `
-          SELECT 
-            username
-          FROM
-            users
-          WHERE
-            LOWER(username) = LOWER($1)
-          ;`,
-      values: [username],
-    });
-    if (results.rowCount > 0) {
-      throw new ValidationError({
-        message: "Username informado já está sendo utilizado.",
-        action: "Utilize outro username para realizar o cadastro.",
-      });
-    }
-  }
-
-  async function hashPasswordInObject(userInputValue) {
-    const hashedPassword = await password.hash(userInputValue.password);
-    userInputValue.password = hashedPassword;
-  }
 
   async function runInsertQuery(userInputValue) {
     const results = await database.query({
@@ -102,9 +57,106 @@ async function findOneByUsername(username) {
   }
 }
 
+async function update(username, userInputValues) {
+  const currentUser = await findOneByUsername(username);
+
+  if ("username" in userInputValues) {
+    if (userInputValues.username.toLowerCase() !== username.toLowerCase()) {
+      await validadeUniqueUsername(userInputValues.username);
+    }
+  }
+
+  if ("email" in userInputValues) {
+    if (
+      userInputValues.email.toLowerCase() !== currentUser.email.toLowerCase()
+    ) {
+      await validadeUniqueEmail(userInputValues.email);
+    }
+  }
+
+  if ("password" in userInputValues) {
+    await hashPasswordInObject(userInputValues);
+  }
+
+  const userWithNewsValues = { ...currentUser, ...userInputValues };
+
+  const updatedUser = await runUpdateQuery(userWithNewsValues);
+  return updatedUser;
+
+  async function runUpdateQuery(userWithNewsValues) {
+    const results = await database.query({
+      text: `
+        UPDATE
+         users
+        SET
+         username = $1,
+         email = $2,
+         password = $3,
+         updated_at = timezone('utc', now())
+        WHERE 
+          id = $4 
+        RETURNING *
+        ;`,
+      values: [
+        userWithNewsValues.username,
+        userWithNewsValues.email,
+        userWithNewsValues.password,
+        currentUser.id,
+      ],
+    });
+    return results.rows[0];
+  }
+}
+
+async function validadeUniqueUsername(username) {
+  const results = await database.query({
+    text: `
+        SELECT 
+          username
+        FROM
+          users
+        WHERE
+          LOWER(username) = LOWER($1)
+        ;`,
+    values: [username],
+  });
+  if (results.rowCount > 0) {
+    throw new ValidationError({
+      message: "Username informado já está sendo utilizado.",
+      action: "Utilize outro username para realizar esta operação.",
+    });
+  }
+}
+
+async function validadeUniqueEmail(email) {
+  const results = await database.query({
+    text: `
+        SELECT 
+          email
+        FROM
+          users
+        WHERE
+          LOWER(email) = LOWER($1)
+        ;`,
+    values: [email],
+  });
+  if (results.rowCount > 0) {
+    throw new ValidationError({
+      message: "Email informado já está sendo utilizado.",
+      action: "Utilize outro email para realizar esta operação.",
+    });
+  }
+}
+
+async function hashPasswordInObject(userInputValue) {
+  const hashedPassword = await password.hash(userInputValue.password);
+  userInputValue.password = hashedPassword;
+}
+
 const user = {
   create,
   findOneByUsername,
+  update,
 };
 
 export default user;
